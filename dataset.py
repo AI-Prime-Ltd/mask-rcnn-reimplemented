@@ -7,13 +7,13 @@ import io
 import torch
 import torch.utils.data as data
 import pycocotools.mask as mask_util
+import pytorch_lightning as pl
 
 # temporary imports
 from utils import Timer
 from structures.boxes import BoxMode
 
 from tqdm import tqdm
-
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def load_coco_json(json_file, image_root, dataset_name=None, extra_annotation_ke
     with contextlib.redirect_stdout(io.StringIO()):
         coco_api = COCO(json_file)
     if timer.seconds() > 1:
-        logger.info("Loading {} takes {:.2f} seconds.".format(json_file, timer.seconds()))
+        logger.info("Loading {} with pycocotools takes {:.2f} seconds.".format(json_file, timer.seconds()))
 
     # ----- Load COCO Categories ----- #
     cat_ids = sorted(coco_api.getCatIds())
@@ -90,6 +90,7 @@ def load_coco_json(json_file, image_root, dataset_name=None, extra_annotation_ke
     imgs_anns = list(zip(imgs, anns))
     logger.info("Loaded {} images in COCO format from {}".format(len(imgs_anns), json_file))
 
+    # ---- Generate Dataset Dict ---- #
     dataset_dicts = []
     ann_keys = ["iscrowd", "bbox", "keypoints", "category_id"] + (extra_annotation_keys or [])
     num_instances_without_valid_segmentation = 0
@@ -102,6 +103,7 @@ def load_coco_json(json_file, image_root, dataset_name=None, extra_annotation_ke
         image_id = record["image_id"] = img_dict["id"]
 
         objs = []
+
         for anno in anno_dict_list:
             # Check that the image_id in this annotation is the same as
             # the image_id we're looking at.
@@ -112,16 +114,14 @@ def load_coco_json(json_file, image_root, dataset_name=None, extra_annotation_ke
             # can trigger this assertion.
             assert anno["image_id"] == image_id
             assert anno.get("ignore", 0) == 0, '"ignore" in COCO json file is not supported.'
-
             obj = {key: anno[key] for key in ann_keys if key in anno}
-
             segm = anno.get("segmentation", None)
             if segm:  # either list[list[float]] or dict(RLE)
                 if isinstance(segm, dict):  # RLE case
                     if isinstance(segm["counts"], list):
                         # convert to compressed RLE
                         segm = mask_util.frPyObjects(segm, *segm["size"])
-                else:                       # polygon case
+                else:  # polygon case
                     # filter out invalid polygons (< 3 points)
                     segm = [poly for poly in segm if len(poly) % 2 == 0 and len(poly) >= 6]
                     if len(segm) == 0:
@@ -148,7 +148,7 @@ def load_coco_json(json_file, image_root, dataset_name=None, extra_annotation_ke
 
             obj["bbox_mode"] = BoxMode.XYWH_ABS
             obj["category_id"] = id_map[obj["category_id"]]
-            obj["category_name"] = cats[obj["category_id"]]
+            obj["category_info"] = cats[obj["category_id"]]
             objs.append(obj)
         record["annotations"] = objs
         dataset_dicts.append(record)
@@ -159,7 +159,7 @@ def load_coco_json(json_file, image_root, dataset_name=None, extra_annotation_ke
                 num_instances_without_valid_segmentation
             )
             + "There might be issues in your dataset generation process. "
-            "A valid polygon should be a list[float] with even length >= 6."
+              "A valid polygon should be a list[float] with even length >= 6."
         )
     return dataset_dicts
 
@@ -174,10 +174,8 @@ class COCODataset(object):
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     dataset_dicts = load_coco_json(
-        r"/public/datasets/coco2017/annotations/instances_train2017.json",
+        r"/public/datasets/coco2017/annotations/person_keypoints_train2017.json",
         r"/public/datasets/coco2017/train2017",
         r"coco2017"
     )
     dir(dataset_dicts)
-
-

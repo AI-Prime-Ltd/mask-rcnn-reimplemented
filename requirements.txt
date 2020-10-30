@@ -3,3 +3,4 @@ pycocotools~=2.0.2
 numpy~=1.19.2
 shapely~=1.7.1
 opencv-contrib-python~=4.4.0.44
+pytorch-lightning~=1.0.3

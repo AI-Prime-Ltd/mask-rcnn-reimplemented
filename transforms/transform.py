@@ -3,6 +3,7 @@ import pprint
 from abc import ABCMeta, abstractmethod
 from typing import Any, Callable, List, Optional, TypeVar, Tuple, Dict, Union
 from itertools import chain
+from functools import partial
 from collections import ChainMap
 
 import numpy as np
@@ -11,19 +12,7 @@ from PIL import Image
 import cv2
 
 from .transform_utils import to_numpy, to_float_tensor
-
-
-__all__ = [
-    "BlendTransform",
-    "CropTransform",
-    "GridSampleTransform",
-    "HFlipTransform",
-    "VFlipTransform",
-    "NoOpTransform",
-    "ScaleTransform",
-    "Transform",
-    "TransformList",
-]
+# from .functional import adjust_color, adjust_contrast, adjust_brightness
 
 
 class Transform(metaclass=ABCMeta):
@@ -63,7 +52,7 @@ class Transform(metaclass=ABCMeta):
             imgs (np.ndarray): images to perform transformation.
             kwargs (datatype -> tuple or dict of ndarrays): data to perform transformation.
         Returns:
-            tuple of images if only imgs are provided else dict of tuples or a single ChainMap.
+            tuple of images if only imgs are provided else dict of tuples or a single dict.
         Examples:
             ```
             >>> # simple usage: apply transform to images only
@@ -88,13 +77,28 @@ class Transform(metaclass=ABCMeta):
             for dt in kwargs.keys():    # check unique
                 assert hasattr(self, "apply_" + dt), f"{self.__class__} for type {dt} is undefined."
             if all(isinstance(v, tuple) for v in kwargs.values()):
-                return {dt: tuple(getattr(self, "apply_" + dt)(data) for data in kwargs[dt]) for dt in kwargs.keys()}
+                res = {}
+                img_data = kwargs.pop("image", None)
+                if img_data:
+                    res["image"] = tuple(self.apply_image(data) for data in img_data)
+                coords_data = kwargs.pop("coords", None)
+                if coords_data:
+                    res["coords"] = tuple(self.apply_coords(data) for data in coords_data)
+                res.update({dt: tuple(getattr(self, "apply_" + dt)(data) for data in kwargs[dt]) for dt in kwargs.keys()})
+                return res
             elif all(isinstance(v, dict) for v in kwargs.values()):
                 assert len(set(chain(*kwargs.values()))) == sum(len(v.keys()) for v in kwargs.values()), \
                     "keys must be unique for all data types"
-                return ChainMap(
-                    *(({k: getattr(self, "apply_" + dt)(v)} for k, v in kwargs[dt].items())
-                      for dt in kwargs.keys()))
+                res = {}
+                img_data = kwargs.pop("image", None)
+                if img_data:
+                    res["image"] = {k: self.apply_image(v) for k, v in img_data.items()}
+                coords_data = kwargs.pop("coords", None)
+                if coords_data:
+                    res["coords"] = {k: self.apply_coords(v) for k, v in coords_data.items()}
+                for dt in kwargs.keys():
+                    res.update({k: getattr(self, "apply_" + dt)(v) for k, v in kwargs[dt].items()})
+                return res
             else:
                 raise ValueError("each value in kwargs should be either a dict or a tuple but not mixed.")
 
@@ -141,7 +145,7 @@ class Transform(metaclass=ABCMeta):
 
     def apply_box(self, box: np.ndarray) -> np.ndarray:
         """
-        Apply the transform on an axis-aligned box. By default will transform
+        Apply the transform on axis-aligned boxes. By default will transform
         the corner points and use their minimum/maximum to create a new
         axis-aligned box. Note that this default may change the size of your
         box, e.g. after rotations.
@@ -165,6 +169,23 @@ class Transform(metaclass=ABCMeta):
         maxxy = coords.max(axis=1)
         trans_boxes = np.concatenate((minxy, maxxy), axis=1)
         return trans_boxes
+
+    def apply_rotated_box(self, rotated_box: np.ndarray):
+        """
+        Apply the transform on rotated boxes.
+        Args:
+            rotated_box (ndarray): Nx5 floating point array of
+                (x_center, y_center, width, height, angle_degrees) format
+                in absolute coordinates.
+        Returns:
+            ndarray: rotated box after apply the transformation.
+        Note:
+            The coordinates are not pixel indices. Coordinates inside an image of
+            shape (H, W) are in range [0, W] or [0, H].
+            This function does not clip boxes to force them inside the image.
+            It is up to the application that uses the boxes to decide.
+        """
+        raise NotImplementedError()
 
     def apply_polygons(self, polygons: list) -> list:
         """
@@ -272,6 +293,10 @@ class Transform(metaclass=ABCMeta):
 
 
 _T = TypeVar("_T")
+
+
+class IAATransform(Transform):
+    pass
 
 
 # pyre-ignore-all-errors
@@ -385,7 +410,7 @@ class HFlipTransform(Transform):
     Perform horizontal flip.
     """
 
-    def __init__(self, width: int):
+    def __init__(self, width: Optional[int] = None):
         super().__init__()
         self._set_attributes(locals())
 
@@ -402,8 +427,10 @@ class HFlipTransform(Transform):
         # NOTE: opencv would be faster:
         # https://github.com/pytorch/pytorch/issues/16424#issuecomment-580695672
         if img.ndim <= 3:  # HxW, HxWxC
+            self._width = img.shape[1] if self.width is None else None
             return np.flip(img, axis=1)
-        else:
+        else:              # NxHxWxC
+            self._width = img.shape[-2] if self.width is None else None
             return np.flip(img, axis=-2)
 
     def apply_coords(self, coords: np.ndarray) -> np.ndarray:
@@ -419,7 +446,9 @@ class HFlipTransform(Transform):
             Therefore they are flipped by `(W - x, H - y)`, not
             `(W - 1 - x, H - 1 - y)`.
         """
-        coords[:, 0] = self.width - coords[:, 0]
+        assert self.width is not None or self._width is not None, \
+            "image transform must be applied before coordinate transforms if width is not provided"
+        coords[:, 0] = (self.width if self.width else self._width) - coords[:, 0]
         return coords
 
     def apply_rotated_box(self, rotated_box: np.ndarray) -> np.ndarray:
@@ -430,8 +459,10 @@ class HFlipTransform(Transform):
                 (x_center, y_center, width, height, angle_degrees) format
                 in absolute coordinates.
         """
+        assert self.width is not None or self._width is not None, \
+            "image transform must be applied before rotated_box transforms if width is not provided"
         # Transform x_center
-        rotated_box[:, 0] = self.width - rotated_box[:, 0]
+        rotated_box[:, 0] = (self.width if self.width else self._width) - rotated_box[:, 0]
         # Transform angle
         rotated_box[:, 4] = -rotated_box[:, 4]
         return rotated_box
@@ -448,7 +479,7 @@ class VFlipTransform(Transform):
     Perform vertical flip.
     """
 
-    def __init__(self, height: int):
+    def __init__(self, height: Optional[int] = None):
         super().__init__()
         self._set_attributes(locals())
 
@@ -465,9 +496,11 @@ class VFlipTransform(Transform):
         tensor = torch.from_numpy(np.ascontiguousarray(img))
         if len(tensor.shape) == 2:
             # For dimension of HxW.
+            self._height = tensor.size(0) if self.height is None else None
             tensor = tensor.flip((-2))
         elif len(tensor.shape) > 2:
             # For dimension of HxWxC, NxHxWxC.
+            self._height = tensor.size(-3) if self.height is None else None
             tensor = tensor.flip((-3))
         return tensor.numpy()
 
@@ -484,8 +517,26 @@ class VFlipTransform(Transform):
             Therefore they are flipped by `(W - x, H - y)`, not
             `(W - 1 - x, H - 1 - y)`.
         """
-        coords[:, 1] = self.height - coords[:, 1]
+        assert self.height is not None or self._height is not None, \
+            "image transform must be applied before rotated_box transforms if height is not provided"
+        coords[:, 1] = (self.height if self.height else self._height) - coords[:, 1]
         return coords
+
+    def apply_rotated_box(self, rotated_box: np.ndarray) -> np.ndarray:
+        """
+        Apply the horizontal flip transform on rotated boxes.
+        Args:
+            rotated_box (ndarray): Nx5 floating point array of
+                (x_center, y_center, width, height, angle_degrees) format
+                in absolute coordinates.
+        """
+        assert self.height is not None or self._height is not None, \
+            "image transform must be applied before rotated_box transforms if height is not provided"
+        # Transform x_center
+        rotated_box[:, 1] = (self.height if self.height else self._height) - rotated_box[:, 1]
+        # Transform angle
+        rotated_box[:, 4] = -rotated_box[:, 4]
+        return rotated_box
 
     def inverse(self) -> Transform:
         """
@@ -522,13 +573,13 @@ class ScaleTransform(Transform):
     Resize the image to a target size.
     """
 
-    def __init__(self, h: int, w: int, new_h: int, new_w: int, interp: str = None):
+    def __init__(self, new_h: int, new_w: int, h: Optional[int] = None, w: Optional[int] = None, interp: str = 'bilinear'):
         """
         Args:
-            h, w (int): original image size.
             new_h, new_w (int): new image size.
+            h, w (Optional[int]): original image size, if not provided, will be inferred from apply_image
             interp (str): interpolation methods. Options includes `nearest`, `linear`
-                (3D-only), `bilinear`, `bicubic` (4D-only), and `area`.
+                (3D-only), `bilinear`, `bicubic` (4D-only), and `area`. Default value is `bilinear`.
                 Details can be found in:
                 https://pytorch.org/docs/stable/nn.functional.html
         """
@@ -555,7 +606,10 @@ class ScaleTransform(Transform):
             h, w = img.shape[:2]
         else:
             raise ("Unsupported input with shape of {}".format(img.shape))
+        self._h = h if self.h is None else None
+        self._w = w if self.w is None else None
         assert (
+            (not self.h and not self.w) or
             self.h == h and self.w == w
         ), "Input size mismatch h w {}:{} -> {}:{}".format(self.h, self.w, h, w)
         interp_method = interp if interp is not None else self.interp
@@ -585,8 +639,8 @@ class ScaleTransform(Transform):
         Returns:
             ndarray: resized coordinates.
         """
-        coords[:, 0] = coords[:, 0] * (self.new_w * 1.0 / self.w)
-        coords[:, 1] = coords[:, 1] * (self.new_h * 1.0 / self.h)
+        coords[:, 0] = coords[:, 0] * (self.new_w * 1.0 / (self.w if self.w else self._w))
+        coords[:, 1] = coords[:, 1] * (self.new_h * 1.0 / (self.h if self.h else self._h))
         return coords
 
     def apply_rotated_box(self, rotated_boxes):
@@ -598,8 +652,8 @@ class ScaleTransform(Transform):
                 (x_center, y_center, width, height, angle_degrees) format
                 in absolute coordinates.
         """
-        scale_factor_x = self.new_w * 1.0 / self.w
-        scale_factor_y = self.new_h * 1.0 / self.h
+        scale_factor_x = self.new_w * 1.0 / (self.w if self.w else self._w)
+        scale_factor_y = self.new_h * 1.0 / (self.h if self.h else self._h)
         rotated_boxes[:, 0] *= scale_factor_x
         rotated_boxes[:, 1] *= scale_factor_y
         theta = rotated_boxes[:, 4] * np.pi / 180.0
@@ -627,7 +681,7 @@ class ScaleTransform(Transform):
         """
         The inverse is to resize it back.
         """
-        return ScaleTransform(self.new_h, self.new_w, self.h, self.w, self.interp)
+        return ScaleTransform((self.h if self.h else self._h), (self.w if self.w else self._w), self.new_h, self.new_w, self.interp)
 
 
 class GridSampleTransform(Transform):
@@ -686,11 +740,11 @@ class GridSampleTransform(Transform):
 
 
 class CropTransform(Transform):
-    def __init__(self, x0: int, y0: int, w: int, h: int):
-        # TODO: flip the order of w and h.
+    def __init__(self, x0: int, y0: int, x1: int, y1: int):
         """
         Args:
-            x0, y0, w, h (int): crop the image(s) by img[y0:y0+h, x0:x0+w].
+            x0, y0, x1, y1 (int): crop the image(s) by img[y0:y1+1, x0:y1+1]. Note that x0, y0, x1, y1 are image indices,
+            i.e., x0, x1 is in [0, W-1] and y0, y1 in [0, H-1].
         """
         super().__init__()
         self._set_attributes(locals())
@@ -706,9 +760,9 @@ class CropTransform(Transform):
             ndarray: cropped image(s).
         """
         if len(img.shape) <= 3:
-            return img[self.y0 : self.y0 + self.h, self.x0 : self.x0 + self.w]
+            return img[self.y0 : self.y1 + 1, self.x0 : self.x1 + 1]
         else:
-            return img[..., self.y0 : self.y0 + self.h, self.x0 : self.x0 + self.w, :]
+            return img[..., self.y0 : self.y1, self.x0 : self.x1, :]
 
     def apply_coords(self, coords: np.ndarray) -> np.ndarray:
         """
@@ -738,7 +792,7 @@ class CropTransform(Transform):
 
         # Create a window that will be used to crop
         crop_box = geometry.box(
-            self.x0, self.y0, self.x0 + self.w, self.y0 + self.h
+            self.x0, self.y0, self.x1+1, self.y1+1
         ).buffer(0.0)
 
         cropped_polygons = []
@@ -771,7 +825,7 @@ class BlendTransform(Transform):
     Blend target images with the given source image.
     """
 
-    def __init__(self, src_image: np.ndarray, src_weight: float, dst_weight: float):
+    def __init__(self, src_image: np.ndarray, src_weight: float, dst_weight: float, bias: float = 0.):
         """
         Blends the input image (dst_image) with the src_image using formula:
         ``src_weight * src_image + dst_weight * dst_image``
@@ -779,6 +833,7 @@ class BlendTransform(Transform):
             src_image (ndarray): Input image is blended with this image
             src_weight (float): Blend weighting of src_image
             dst_weight (float): Blend weighting of dst_image
+            bias (float): Blend bias to be added on the output image
         """
         super().__init__()
         self._set_attributes(locals())
@@ -797,10 +852,10 @@ class BlendTransform(Transform):
         """
         if img.dtype == np.uint8:
             img = img.astype(np.float32)
-            img = self.src_weight * self.src_image + self.dst_weight * img
+            img = self.src_weight * self.src_image + self.dst_weight * img + self.bias
             return np.clip(img, 0, 255).astype(np.uint8)
         else:
-            return self.src_weight * self.src_image + self.dst_weight * img
+            return self.src_weight * self.src_image + self.dst_weight * img + self.bias
 
     def apply_coords(self, coords: np.ndarray) -> np.ndarray:
         """
@@ -965,15 +1020,17 @@ class RotationTransform(Transform):
         return TransformList([rotation, crop])
 
 
-class ColorTransform(Transform):
+class PhotometricTransform(Transform):
     """
     Generic wrapper for any photometric transforms.
     These transformations should only affect the color space and
-        not the coordinate space of the image (e.g. annotation
-        coordinates such as bounding boxes should not be changed)
+    not the coordinate space of the image (e.g. annotation
+    coordinates such as bounding boxes should not be changed)
+    The input image should assumed to be of type uint8 in range [0, 255] and RGB order.
+    The shape can be NxHxWxC, or HxWxC or HxW.
     """
 
-    def __init__(self, op):
+    def __init__(self, op: Callable):
         """
         Args:
             op (Callable): operation to be applied to the image,
@@ -990,6 +1047,15 @@ class ColorTransform(Transform):
     def apply_coords(self, coords):
         return coords
 
+    def apply_box(self, box: np.ndarray) -> np.ndarray:
+        return box
+
+    def apply_rotated_box(self, rotated_box: np.ndarray):
+        return rotated_box
+
+    def apply_polygons(self, polygons: list) -> list:
+        return polygons
+
     def inverse(self):
         return NoOpTransform()
 
@@ -997,14 +1063,14 @@ class ColorTransform(Transform):
         return segmentation
 
 
-class PILColorTransform(ColorTransform):
+class PILPhotometricTransform(PhotometricTransform):
     """
     Generic wrapper for PIL Photometric image transforms,
         which affect the color space and not the coordinate
         space of the image
     """
 
-    def __init__(self, op):
+    def __init__(self, op: Callable):
         """
         Args:
             op (Callable): operation to be applied to the image,
@@ -1020,3 +1086,67 @@ class PILColorTransform(ColorTransform):
     def apply_image(self, img):
         img = Image.fromarray(img)
         return np.asarray(super().apply_image(img))
+
+
+# class BrightnessTransform(PhotometricTransform):
+#     """
+#     Adjust image brightness.
+#     This transform controls the brightness of an image. An
+#     enhancement factor of 0.0 gives a black image.
+#     A factor of 1.0 gives the original image. This function
+#     blends the source image and the degenerated black image:
+#     ``output = img * factor + degenerated * (1 - factor)``
+#     """
+#     def __init__(self, factor: float = 1.):
+#         """
+#         Args:
+#             factor (float): A value controls the enhancement.
+#                 Factor 1.0 returns the original image, lower
+#                 factors mean less color (brightness, contrast,
+#                 etc), and higher values more. Default 1.
+#         """
+#         super().__init__(partial(adjust_brightness, factor=factor))
+
+
+# class ContrastTransform(PhotometricTransform):
+#     """
+#     Adjust image contrast.
+#     This transform controls the contrast of an image. An
+#     enhancement factor of 0.0 gives a solid grey
+#     image. A factor of 1.0 gives the original image. It
+#     blends the source image and the degenerated mean image:
+#     ``output = img * factor + degenerated * (1 - factor)``
+#     """
+#     def __init__(self, factor: float = 1.):
+#         """
+#         Args:
+#             factor (float): A value controls the enhancement.
+#                 Factor 1.0 returns the original image, lower
+#                 factors mean less color (brightness, contrast,
+#                 etc), and higher values more. Default 1.
+#         """
+#         super().__init__(partial(adjust_contrast, factor=factor))
+
+
+# class ColorTransform(PhotometricTransform):
+#     """
+#     This transform blends the source image and its gray image:
+#     ``output = img * alpha + gray_img * beta + gamma``
+#         """
+#     def __init__(
+#             self,
+#             alpha: Optional[Union[int, float]] = 1.,
+#             beta: Optional[Union[int, float]] = None,
+#             gamma: Optional[Union[int, float]] = 0
+#     ):
+#         """
+#         Args:
+#             alpha (int | float): Weight for the source image. Default 1.
+#             beta (int | float): Weight for the converted gray image.
+#                 If None, it's assigned the value (1 - `alpha`).
+#             gamma (int | float): Scalar added to each sum.
+#                 Same as :func:`cv2.addWeighted`. Default 0.
+#         """
+#         super().__init__(partial(adjust_color, alpha=alpha, beta=beta, gamma=gamma))
+
+
