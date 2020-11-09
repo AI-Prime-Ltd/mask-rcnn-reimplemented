@@ -12,7 +12,7 @@ from PIL import Image
 import cv2
 
 from .transform_utils import to_numpy, to_float_tensor
-# from .functional import adjust_color, adjust_contrast, adjust_brightness
+from .functional import adjust_color, adjust_contrast, adjust_brightness
 
 
 class Transform(metaclass=ABCMeta):
@@ -296,6 +296,9 @@ _T = TypeVar("_T")
 
 
 class IAATransform(Transform):
+    """
+    TODO: Add wrapper for imgaug Augmentations.
+    """
     pass
 
 
@@ -820,62 +823,6 @@ class CropTransform(Transform):
         return [self.apply_coords(p) for p in cropped_polygons]
 
 
-class BlendTransform(Transform):
-    """
-    Blend target images with the given source image.
-    """
-
-    def __init__(self, src_image: np.ndarray, src_weight: float, dst_weight: float, bias: float = 0.):
-        """
-        Blends the input image (dst_image) with the src_image using formula:
-        ``src_weight * src_image + dst_weight * dst_image``
-        Args:
-            src_image (ndarray): Input image is blended with this image
-            src_weight (float): Blend weighting of src_image
-            dst_weight (float): Blend weighting of dst_image
-            bias (float): Blend bias to be added on the output image
-        """
-        super().__init__()
-        self._set_attributes(locals())
-
-    def apply_image(self, img: np.ndarray, interp: str = None) -> np.ndarray:
-        """
-        Apply blend transform on the image(s).
-        Args:
-            img (ndarray): of shape NxHxWxC, or HxWxC or HxW. The array can be
-                of type uint8 in range [0, 255], or floating point in range
-                [0, 1] or [0, 255].
-            interp (str): keep this option for consistency, perform blend would not
-                require interpolation.
-        Returns:
-            ndarray: blended image(s).
-        """
-        if img.dtype == np.uint8:
-            img = img.astype(np.float32)
-            img = self.src_weight * self.src_image + self.dst_weight * img + self.bias
-            return np.clip(img, 0, 255).astype(np.uint8)
-        else:
-            return self.src_weight * self.src_image + self.dst_weight * img + self.bias
-
-    def apply_coords(self, coords: np.ndarray) -> np.ndarray:
-        """
-        Apply no transform on the coordinates.
-        """
-        return coords
-
-    def apply_segmentation(self, segmentation: np.ndarray) -> np.ndarray:
-        """
-        Apply no transform on the full-image segmentation.
-        """
-        return segmentation
-
-    def inverse(self) -> Transform:
-        """
-        The inverse is a no-op.
-        """
-        return NoOpTransform()
-
-
 class ExtentTransform(Transform):
     """
     Extracts a subregion from the source image and scales it to the output size.
@@ -1088,65 +1035,119 @@ class PILPhotometricTransform(PhotometricTransform):
         return np.asarray(super().apply_image(img))
 
 
-# class BrightnessTransform(PhotometricTransform):
-#     """
-#     Adjust image brightness.
-#     This transform controls the brightness of an image. An
-#     enhancement factor of 0.0 gives a black image.
-#     A factor of 1.0 gives the original image. This function
-#     blends the source image and the degenerated black image:
-#     ``output = img * factor + degenerated * (1 - factor)``
-#     """
-#     def __init__(self, factor: float = 1.):
-#         """
-#         Args:
-#             factor (float): A value controls the enhancement.
-#                 Factor 1.0 returns the original image, lower
-#                 factors mean less color (brightness, contrast,
-#                 etc), and higher values more. Default 1.
-#         """
-#         super().__init__(partial(adjust_brightness, factor=factor))
+class BrightnessTransform(PhotometricTransform):
+    """
+    Adjust image brightness.
+    This transform controls the brightness of an image. An
+    enhancement factor of 0.0 gives a black image.
+    A factor of 1.0 gives the original image. This function
+    blends the source image and the degenerated black image:
+    ``output = img * factor + degenerated * (1 - factor)``
+    """
+    def __init__(self, factor: float = 1.):
+        """
+        Args:
+            factor (float): A value controls the enhancement.
+                Factor 1.0 returns the original image, lower
+                factors mean less color (brightness, contrast,
+                etc), and higher values more. Default 1.
+        """
+        super().__init__(partial(adjust_brightness, factor=factor))
 
 
-# class ContrastTransform(PhotometricTransform):
-#     """
-#     Adjust image contrast.
-#     This transform controls the contrast of an image. An
-#     enhancement factor of 0.0 gives a solid grey
-#     image. A factor of 1.0 gives the original image. It
-#     blends the source image and the degenerated mean image:
-#     ``output = img * factor + degenerated * (1 - factor)``
-#     """
-#     def __init__(self, factor: float = 1.):
-#         """
-#         Args:
-#             factor (float): A value controls the enhancement.
-#                 Factor 1.0 returns the original image, lower
-#                 factors mean less color (brightness, contrast,
-#                 etc), and higher values more. Default 1.
-#         """
-#         super().__init__(partial(adjust_contrast, factor=factor))
+class ContrastTransform(PhotometricTransform):
+    """
+    Adjust image contrast.
+    This transform controls the contrast of an image. An
+    enhancement factor of 0.0 gives a solid grey
+    image. A factor of 1.0 gives the original image. It
+    blends the source image and the degenerated mean image:
+    ``output = img * factor + degenerated * (1 - factor)``
+    """
+    def __init__(self, factor: float = 1.):
+        """
+        Args:
+            factor (float): A value controls the enhancement.
+                Factor 1.0 returns the original image, lower
+                factors mean less color (brightness, contrast,
+                etc), and higher values more. Default 1.
+        """
+        super().__init__(partial(adjust_contrast, factor=factor))
 
 
-# class ColorTransform(PhotometricTransform):
-#     """
-#     This transform blends the source image and its gray image:
-#     ``output = img * alpha + gray_img * beta + gamma``
-#         """
-#     def __init__(
-#             self,
-#             alpha: Optional[Union[int, float]] = 1.,
-#             beta: Optional[Union[int, float]] = None,
-#             gamma: Optional[Union[int, float]] = 0
-#     ):
-#         """
-#         Args:
-#             alpha (int | float): Weight for the source image. Default 1.
-#             beta (int | float): Weight for the converted gray image.
-#                 If None, it's assigned the value (1 - `alpha`).
-#             gamma (int | float): Scalar added to each sum.
-#                 Same as :func:`cv2.addWeighted`. Default 0.
-#         """
-#         super().__init__(partial(adjust_color, alpha=alpha, beta=beta, gamma=gamma))
+class ColorTransform(PhotometricTransform):
+    """
+    This transform blends the source image and its gray image:
+    ``output = img * alpha + gray_img * beta + gamma``
+        """
+    def __init__(
+            self,
+            alpha: Optional[Union[int, float]] = 1.,
+            beta: Optional[Union[int, float]] = None,
+            gamma: Optional[Union[int, float]] = 0
+    ):
+        """
+        Args:
+            alpha (int | float): Weight for the source image. Default 1.
+            beta (int | float): Weight for the converted gray image.
+                If None, it's assigned the value (1 - `alpha`).
+            gamma (int | float): Scalar added to each sum.
+                Same as :func:`cv2.addWeighted`. Default 0.
+        """
+        super().__init__(partial(adjust_color, alpha=alpha, beta=beta, gamma=gamma))
 
 
+class BlendTransform(PhotometricTransform):
+    """
+    Blend target images with the given source image.
+    """
+
+    def __init__(self, src_image: np.ndarray, src_weight: float, dst_weight: float, bias: float = 0.):
+        """
+        Blends the input image (dst_image) with the src_image using formula:
+        ``src_weight * src_image + dst_weight * dst_image``
+        Args:
+            src_image (ndarray): Input image is blended with this image
+            src_weight (float): Blend weighting of src_image
+            dst_weight (float): Blend weighting of dst_image
+            bias (float): Blend bias to be added on the output image
+        """
+        super().__init__()
+        self._set_attributes(locals())
+
+    def apply_image(self, img: np.ndarray, interp: str = None) -> np.ndarray:
+        """
+        Apply blend transform on the image(s).
+        Args:
+            img (ndarray): of shape NxHxWxC, or HxWxC or HxW. The array can be
+                of type uint8 in range [0, 255], or floating point in range
+                [0, 1] or [0, 255].
+            interp (str): keep this option for consistency, perform blend would not
+                require interpolation.
+        Returns:
+            ndarray: blended image(s).
+        """
+        if img.dtype == np.uint8:
+            img = img.astype(np.float32)
+            img = self.src_weight * self.src_image + self.dst_weight * img + self.bias
+            return np.clip(img, 0, 255).astype(np.uint8)
+        else:
+            return self.src_weight * self.src_image + self.dst_weight * img + self.bias
+
+    def apply_coords(self, coords: np.ndarray) -> np.ndarray:
+        """
+        Apply no transform on the coordinates.
+        """
+        return coords
+
+    def apply_segmentation(self, segmentation: np.ndarray) -> np.ndarray:
+        """
+        Apply no transform on the full-image segmentation.
+        """
+        return segmentation
+
+    def inverse(self) -> Transform:
+        """
+        The inverse is a no-op.
+        """
+        return NoOpTransform()

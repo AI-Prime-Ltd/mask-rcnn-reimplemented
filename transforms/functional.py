@@ -85,10 +85,9 @@ def normalize(img, mean, std):
         std (ndarray): The std to be devided, should be either a number or array-like channel-wise float std.
         to_rgb (bool): Whether to convert to rgb.
     Returns:
-        ndarray: The normalized float64 image.
+        ndarray: The normalized image.
     """
-    stdinv = 1. / np.float64(std)
-    return (img - mean) * stdinv
+    return ((img - mean) / np.float64(std)).astype(img.dtype)
 
 
 def denormalize(img, mean, std):
@@ -132,7 +131,8 @@ def adjust_color(img, alpha=1, beta=None, gamma=0):
     Returns:
         ndarray: Colored image which has the same size and dtype as input.
     """
-    gray_img = rgb2gray(img)
+    gray_img = rgb2gray(img)    # HxW or NxHxWx1
+    assert gray_img.ndim == 2 or (gray_img.ndim == 4 and gray_img.shape[-1] == 1)
     gray_img = np.tile(gray_img, (1, ) * (gray_img.ndim - 1) + (3, ))
     if beta is None:
         beta = 1 - alpha
@@ -221,11 +221,20 @@ def adjust_contrast(img: np.ndarray, factor=1.):
         ndarray: The contrasted image.
     """
     gray_img = rgb2gray(img)
-    hist = np.histogram(gray_img, 256, (0, 255 if img.dtype == np.uint8 else 1.))[0]
-    mean = round(np.sum(gray_img) / np.sum(hist))
-    degenerated = (np.ones_like(img[..., 0]) * mean).astype(img.dtype)
+    if img.ndim == 2:
+        gray_img = gray_img[None, ..., None]
+    # hist = np.histogram(gray_img, 256, (0, 255 if img.dtype == np.uint8 else 1.))[0]
+    # mean = round(np.sum(gray_img) / np.sum(hist))
+    degenerated = np.ones_like(gray_img) * np.mean(gray_img, axis=(1, 2, 3), dtype=img.dtype, keepdims=True)
     degenerated = gray2rgb(degenerated)
     contrasted_img = cv2.addWeighted(
         img.astype(np.float32), factor, degenerated.astype(np.float32),
         1 - factor, 0)
+    if contrasted_img.shape[0] == 1:
+        contrasted_img = contrasted_img[0, ..., 0]
     return contrasted_img.astype(img.dtype)
+
+
+if __name__ == '__main__':
+    img = np.random.randint(0, 255, (2, 32, 64, 3), dtype=np.uint8)
+    img = adjust_contrast(img)

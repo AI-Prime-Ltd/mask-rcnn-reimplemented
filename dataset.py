@@ -3,19 +3,42 @@ import logging
 from pathlib import Path
 import contextlib
 import io
+import hashlib
+from typing import Optional, List, Dict, Any, Union
+import pickle
 
 import torch
 import torch.utils.data as data
 import pycocotools.mask as mask_util
 import pytorch_lightning as pl
+import json
 
 # temporary imports
 from utils import Timer
 from structures.boxes import BoxMode
+from transforms.augmentation import Compose
 
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
+
+
+def hash_file(p: Path):
+    """
+    Return md5 of a file.
+    Args:
+        p (Path): path to the file to be hashed
+    Returns:
+        str: md5 of the given file
+    """
+    BLOCK_SIZE = 65536  # The size of each read from the file
+    file_hash = hashlib.md5()  # Create the hash object, can use something other than `.sha256()` if you wish
+    with open(str(p), 'rb') as f:  # Open the file to read it's bytes
+        fb = f.read(BLOCK_SIZE)  # Read from the file. Take in the amount declared above
+        while len(fb) > 0:  # While there is still data being read from the file
+            file_hash.update(fb)  # Update the hash
+            fb = f.read(BLOCK_SIZE)  # Read the next block from the file
+    return file_hash.hexdigest()
 
 
 def load_coco_json(json_file, image_root, dataset_name=None, extra_annotation_keys=None):
@@ -95,7 +118,7 @@ def load_coco_json(json_file, image_root, dataset_name=None, extra_annotation_ke
     ann_keys = ["iscrowd", "bbox", "keypoints", "category_id"] + (extra_annotation_keys or [])
     num_instances_without_valid_segmentation = 0
 
-    for (img_dict, anno_dict_list) in tqdm(imgs_anns, desc="processing images"):
+    for (img_dict, anno_dict_list) in tqdm(imgs_anns, desc="parsing coco annotations"):
         record = {}
         record["file_name"] = str(image_root / img_dict["file_name"])
         record["height"] = img_dict["height"]
@@ -164,17 +187,120 @@ def load_coco_json(json_file, image_root, dataset_name=None, extra_annotation_ke
     return dataset_dicts
 
 
-class COCODataset(object):
-    """
+class COCODataset(pl.LightningDataModule):
+    def __init__(
+            self, dataset_root, train_json, val_json=None, test_json=None,
+            train_aug=None, val_aug=None, test_aug=None,
+            used_cached_json=True, *coco_args, **coco_kwargs):
+        super(COCODataset, self).__init__()
+        self.dataset_root = Path(dataset_root)
+        self.train_json = Path(train_json)
+        self.train_json = self.train_json if self.train_json.is_absolute() else self.dataset_root / "annotations" / self.train_json
+        self.val_json = None if val_json is None else Path(val_json)
+        self.val_json = self.val_json if self.val_json and self.train_json.is_absolute() else self.dataset_root / "annotations" / self.val_json
+        self.test_json = None if test_json is None else Path(test_json)
+        self.test_json = self.test_json if self.test_json and self.test_json.is_absolute() else self.dataset_root / "annotations" / self.test_json
+        self.train_aug = train_aug if train_aug else Compose()
+        self.val_aug = val_aug if val_aug else Compose()
+        self.test_aug = test_aug if test_aug else Compose()
+        self.use_cached = used_cached_json
+        self.coco_args = coco_args
+        self.coco_kwargs = coco_kwargs
 
-    """
-    pass
+    def setup(self, stage: Optional[str] = None):
+        if self.use_cached:
+            # try to load cached dataset
+            # TODO: come up with a better way to do this
+            while True:
+                try:
+                    Path("./cache/dataset.lock").touch(exist_ok=False)
+                except Exception as e:
+                    pass
+                else:
+                    break
+            for phase, p in {"train": self.train_json, "val": self.val_json, "test": self.test_json}.items():
+                if p is None:
+                    continue
+                setattr(self, f"{phase}_dataset_md5", hash_file(p))
+                src_md5 = getattr(self, f"{phase}_dataset_md5")
+                for cached_file in Path("./cache/").glob(f"dataset-{src_md5}-*.pkl"):
+                    dst_md5 = cached_file.name.split("-")[-1][:-5]
+                    if hash_file(cached_file) == dst_md5:
+                        logger.info(f"use cached file {cached_file.name} for json {p.name}")
+                        with open(str(cached_file), "rb") as fp:
+                            try:
+                                dataset = pickle.load(fp)
+                            except Exception as e:
+                                logger.warning(f"failed to load {cached_file}: {e}. removing cached file.")
+                                cached_file.unlink()
+                                break
+                        setattr(self, f"{phase}_dataset", dataset)
+
+                    else:
+                        logger.warning(f"find broken cache {cached_file}, deleting...")
+                        cached_file.unlink()
+
+        # load dataset from original coco annotations and create caches
+        for phase, p in {"train": self.train_json, "val": self.val_json, "test": self.test_json}.items():
+            if p is None or hasattr(self, f"{phase}_dataset"):
+                continue
+            dataset = load_coco_json(str(getattr(self, f"{phase}_dataset")), self.dataset_root / phase, *self.coco_args, **self.coco_kwargs)
+            setattr(self, f"{phase}_dataset", dataset)
+            if self.use_cached:
+                logger.info(f"creating cache for json {p.name}")
+                if not hasattr(self, f"{phase}_dataset_md5"):
+                    setattr(self, f"{phase}_dataset_md5", hash_file(p))
+                src_md5 = getattr(self, f"{phase}_dataset_md5")
+                cached_file = Path("./cache/") / f"dataset-{src_md5}-temp.pkl"
+                cached_file.unlink(missing_ok=True)
+                cached_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(str(cached_file), "wb+") as fp:
+                    # loadable since Python3.4
+                    pickle.dump(dataset, fp, protocol=4)
+                dst_md5 = hash_file(cached_file)
+                cached_file.rename(cached_file.parent / f"dataset-{src_md5}-{dst_md5}.pkl")
+
+    def train_dataloader(self, *args, **kwargs) -> data.DataLoader:
+        pass
+
+    def val_dataloader(self, *args, **kwargs) -> Union[data.DataLoader, List[data.DataLoader]]:
+        pass
+
+    def test_dataloader(self, *args, **kwargs) -> Union[data.DataLoader, List[data.DataLoader]]:
+        pass
+
+
+class COCOInstanceDataset(COCODataset):
+    def __init__(self, dataset_root, train_aug=None, val_aug=None, test_aug=None, used_cached_json=True):
+        super(COCOInstanceDataset, self).__init__(
+            dataset_root,
+            train_json="instances_train.json", val_json="instances_val.json", test_json=None,
+            train_aug=train_aug, val_aug=val_aug, test_aug=test_aug,
+            used_cached_json=used_cached_json
+        )
+        self.instances = []
+        for img_info in self.train_dataset:
+            image_id = img_info["image_id"]
+            file_name = img_info["file_name"]
+            self.instances.extend((
+                image_id,
+                file_name,
+                anno["bbox"],
+                anno["bbox_mode"],
+                anno["segmentation"],
+                anno["category_id"]
+            ) for anno in img_info["annotations"])
+
+    def setup(self, stage=None):
+        # Assign train/val datasets for use in dataloaders
+        if stage == 'fit' or stage is None:
+            pass
 
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     dataset_dicts = load_coco_json(
-        r"/public/datasets/coco2017/annotations/person_keypoints_train2017.json",
+        r"/public/datasets/coco2017/annotations/instances_train.json",
         r"/public/datasets/coco2017/train2017",
         r"coco2017"
     )
