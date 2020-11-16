@@ -2,8 +2,9 @@
 Perform random transform
 """
 from random import Random
+from typing import Optional, Dict
+
 from .transform import NoOpTransform, Transform
-import inspect
 
 _rnd = Random()
 
@@ -14,10 +15,15 @@ def seed(seed=1024):
 
 
 class Augmentation(object):
-    def __init__(self, transform, transform_kwargs: dict = {}, prob: float = 1.):
-        self.transform = transform
-        self.tkwarg = transform_kwargs
-        self.prob = prob
+    def __init__(
+            self,
+            transform: Optional[Transform] = None,
+            transform_kwargs: Optional[Dict] = None,
+            prob: Optional[float] = None
+    ):
+        self.transform = transform or NoOpTransform
+        self.tkwarg = transform_kwargs or dict()
+        self.prob = prob or 1.
 
     def apply(self, *imgs, **kwargs):
         """
@@ -62,6 +68,7 @@ class Augmentation(object):
 
 class Compose(Augmentation):
     def __init__(self, argument_list=[]):
+        super(Compose, self).__init__()
         self.aug_list = []
         for aug in argument_list:
             self.aug_list.append(aug if isinstance(aug, Augmentation) else Augmentation(*aug))

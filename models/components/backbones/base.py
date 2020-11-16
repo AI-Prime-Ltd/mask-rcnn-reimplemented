@@ -1,19 +1,15 @@
-from torch import nn
-from abc import ABC, abstractmethod
-from typing import Dict, Iterable, Optional, List, Callable
 import inspect
-from copy import deepcopy
 import logging
 import math
+from copy import deepcopy
 from functools import partial
+from typing import Dict, Iterable, Optional, Callable
 
-import torch as th
-from torch import nn
+import torch.nn as nn
 import torch.utils.hooks as hooks
 import torch.utils.model_zoo as model_zoo
 
 from .helpers import extract_layer
-
 
 _logger = logging.getLogger(__name__)
 
@@ -80,7 +76,6 @@ class MetaBackboneBase(nn.Module, metaclass=MetaBackboneMeta):
     """
     """
     Different variants and the corresponding configs to initialize them should be specified here.
-    
     """
     variants: Dict[str, Dict]
 

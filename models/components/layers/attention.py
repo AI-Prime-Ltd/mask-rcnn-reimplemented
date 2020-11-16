@@ -34,9 +34,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-from torch import nn as nn
-import torch.nn.functional as F
 import math
+
+import torch.nn.functional as F
+from torch import nn as nn
 
 from .activations import HardSigmoid, Sigmoid
 
@@ -64,6 +65,7 @@ class EffectiveSEModule(nn.Module):
     """ 'Effective Squeeze-Excitation
     From `CenterMask : Real-Time Anchor-Free Instance Segmentation` - https://arxiv.org/abs/1911.06667
     """
+
     def __init__(self, channels, gate_layer=HardSigmoid):
         super(EffectiveSEModule, self).__init__()
         self.fc = nn.Conv2d(channels, channels, kernel_size=1, padding=0)
@@ -86,6 +88,7 @@ class EcaModule(nn.Module):
             (default=None. if channel size not given, use k_size given for kernel size.)
         kernel_size: Adaptive selection of kernel size (default=3)
     """
+
     def __init__(self, channels=None, kernel_size=3, gamma=2, beta=1):
         super(EcaModule, self).__init__()
         assert kernel_size % 2 == 1

@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 # ref: https://github.com/facebookresearch/detectron2/blob/master/detectron2/structures/boxes.py
 
-import math
 import logging
-import numpy as np
+import math
 from enum import IntEnum, unique
 from typing import Any, List, Tuple, Union
-import torch
 
+import numpy as np
+import torch
 
 logger = logging.getLogger(__name__)
 _RawBoxType = Union[List[float], Tuple[float, ...], torch.Tensor, np.ndarray]
@@ -197,10 +197,10 @@ class Boxes:
         """
         height, width = box_size
         inds_inside = (
-            (self._tensor[..., 0] >= -boundary_threshold)
-            & (self._tensor[..., 1] >= -boundary_threshold)
-            & (self._tensor[..., 2] < width + boundary_threshold)
-            & (self._tensor[..., 3] < height + boundary_threshold)
+                (self._tensor[..., 0] >= -boundary_threshold)
+                & (self._tensor[..., 1] >= -boundary_threshold)
+                & (self._tensor[..., 2] < width + boundary_threshold)
+                & (self._tensor[..., 3] < height + boundary_threshold)
         )
         return inds_inside
 
@@ -293,13 +293,13 @@ def convert(boxes: _RawBoxType, from_mode: BoxMode, to_mode: BoxMode) -> _RawBox
         BoxMode.XYXY_REL,
         BoxMode.XYWH_REL,
     ] and from_mode.value not in [
-        BoxMode.XYXY_REL,
-        BoxMode.XYWH_REL,
-    ], "Relative mode not yet supported!"
+               BoxMode.XYXY_REL,
+               BoxMode.XYWH_REL,
+           ], "Relative mode not yet supported!"
 
     if from_mode == BoxMode.XYWHA_ABS and to_mode == BoxMode.XYXY_ABS:
         assert (
-            arr.shape[-1] == 5
+                arr.shape[-1] == 5
         ), "The last dimension of input shape must be 5 for XYWHA format"
         original_dtype = arr.dtype
         arr = arr.double()

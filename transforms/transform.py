@@ -1,18 +1,17 @@
 import inspect
 import pprint
 from abc import ABCMeta, abstractmethod
-from typing import Any, Callable, List, Optional, TypeVar, Tuple, Dict, Union
-from itertools import chain
 from functools import partial
-from collections import ChainMap
+from itertools import chain
+from typing import Any, Callable, List, Optional, TypeVar, Tuple, Dict, Union
 
+import cv2
 import numpy as np
 import torch
 from PIL import Image
-import cv2
 
-from .transform_utils import to_numpy, to_float_tensor
 from .functional import adjust_color, adjust_contrast, adjust_brightness
+from .transform_utils import to_numpy, to_float_tensor
 
 
 class Transform(metaclass=ABCMeta):
@@ -71,10 +70,10 @@ class Transform(metaclass=ABCMeta):
             ```
         """
         assert not (imgs and kwargs), "please provide either imgs or kwargs but not both."
-        if imgs:    # simple case
+        if imgs:  # simple case
             return tuple(self.apply_image(img) for img in imgs)
-        else:       # kwargs case
-            for dt in kwargs.keys():    # check unique
+        else:  # kwargs case
+            for dt in kwargs.keys():  # check unique
                 assert hasattr(self, "apply_" + dt), f"{self.__class__} for type {dt} is undefined."
             if all(isinstance(v, tuple) for v in kwargs.values()):
                 res = {}
@@ -84,7 +83,8 @@ class Transform(metaclass=ABCMeta):
                 coords_data = kwargs.pop("coords", None)
                 if coords_data:
                     res["coords"] = tuple(self.apply_coords(data) for data in coords_data)
-                res.update({dt: tuple(getattr(self, "apply_" + dt)(data) for data in kwargs[dt]) for dt in kwargs.keys()})
+                res.update(
+                    {dt: tuple(getattr(self, "apply_" + dt)(data) for data in kwargs[dt]) for dt in kwargs.keys()})
                 return res
             elif all(isinstance(v, dict) for v in kwargs.values()):
                 assert len(set(chain(*kwargs.values()))) == sum(len(v.keys()) for v in kwargs.values()), \
@@ -269,8 +269,8 @@ class Transform(metaclass=ABCMeta):
             argstr = []
             for name, param in sig.parameters.items():
                 assert (
-                    param.kind != param.VAR_POSITIONAL
-                    and param.kind != param.VAR_KEYWORD
+                        param.kind != param.VAR_POSITIONAL
+                        and param.kind != param.VAR_KEYWORD
                 ), "The default __repr__ doesn't support *args or **kwargs"
                 assert hasattr(self, name), (
                     "Attribute {} not found! "
@@ -432,7 +432,7 @@ class HFlipTransform(Transform):
         if img.ndim <= 3:  # HxW, HxWxC
             self._width = img.shape[1] if self.width is None else None
             return np.flip(img, axis=1)
-        else:              # NxHxWxC
+        else:  # NxHxWxC
             self._width = img.shape[-2] if self.width is None else None
             return np.flip(img, axis=-2)
 
@@ -576,7 +576,8 @@ class ScaleTransform(Transform):
     Resize the image to a target size.
     """
 
-    def __init__(self, new_h: int, new_w: int, h: Optional[int] = None, w: Optional[int] = None, interp: str = 'bilinear'):
+    def __init__(self, new_h: int, new_w: int, h: Optional[int] = None, w: Optional[int] = None,
+                 interp: str = 'bilinear'):
         """
         Args:
             new_h, new_w (int): new image size.
@@ -612,8 +613,8 @@ class ScaleTransform(Transform):
         self._h = h if self.h is None else None
         self._w = w if self.w is None else None
         assert (
-            (not self.h and not self.w) or
-            self.h == h and self.w == w
+                (not self.h and not self.w) or
+                self.h == h and self.w == w
         ), "Input size mismatch h w {}:{} -> {}:{}".format(self.h, self.w, h, w)
         interp_method = interp if interp is not None else self.interp
         # Option of align_corners is only supported for linear, bilinear,
@@ -684,7 +685,8 @@ class ScaleTransform(Transform):
         """
         The inverse is to resize it back.
         """
-        return ScaleTransform((self.h if self.h else self._h), (self.w if self.w else self._w), self.new_h, self.new_w, self.interp)
+        return ScaleTransform((self.h if self.h else self._h), (self.w if self.w else self._w), self.new_h, self.new_w,
+                              self.interp)
 
 
 class GridSampleTransform(Transform):
@@ -763,9 +765,9 @@ class CropTransform(Transform):
             ndarray: cropped image(s).
         """
         if len(img.shape) <= 3:
-            return img[self.y0 : self.y1 + 1, self.x0 : self.x1 + 1]
+            return img[self.y0: self.y1 + 1, self.x0: self.x1 + 1]
         else:
-            return img[..., self.y0 : self.y1, self.x0 : self.x1, :]
+            return img[..., self.y0: self.y1, self.x0: self.x1, :]
 
     def apply_coords(self, coords: np.ndarray) -> np.ndarray:
         """
@@ -795,7 +797,7 @@ class CropTransform(Transform):
 
         # Create a window that will be used to crop
         crop_box = geometry.box(
-            self.x0, self.y0, self.x1+1, self.y1+1
+            self.x0, self.y0, self.x1 + 1, self.y1 + 1
         ).buffer(0.0)
 
         cropped_polygons = []
@@ -977,7 +979,7 @@ class PhotometricTransform(Transform):
     The shape can be NxHxWxC, or HxWxC or HxW.
     """
 
-    def __init__(self, op: Callable):
+    def __init__(self, op: Optional[Callable] = None):
         """
         Args:
             op (Callable): operation to be applied to the image,
@@ -989,6 +991,8 @@ class PhotometricTransform(Transform):
         self._set_attributes(locals())
 
     def apply_image(self, img):
+        if self.op is None:
+            raise NotImplementedError()
         return self.op(img)
 
     def apply_coords(self, coords):
@@ -1044,6 +1048,7 @@ class BrightnessTransform(PhotometricTransform):
     blends the source image and the degenerated black image:
     ``output = img * factor + degenerated * (1 - factor)``
     """
+
     def __init__(self, factor: float = 1.):
         """
         Args:
@@ -1064,6 +1069,7 @@ class ContrastTransform(PhotometricTransform):
     blends the source image and the degenerated mean image:
     ``output = img * factor + degenerated * (1 - factor)``
     """
+
     def __init__(self, factor: float = 1.):
         """
         Args:
@@ -1080,6 +1086,7 @@ class ColorTransform(PhotometricTransform):
     This transform blends the source image and its gray image:
     ``output = img * alpha + gray_img * beta + gamma``
         """
+
     def __init__(
             self,
             alpha: Optional[Union[int, float]] = 1.,

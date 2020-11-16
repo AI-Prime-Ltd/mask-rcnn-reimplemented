@@ -43,7 +43,7 @@ def to_float_tensor(numpy_array: np.ndarray) -> torch.Tensor:
 
 
 def to_numpy(
-    float_tensor: torch.Tensor, target_shape: list, target_dtype: np.dtype
+        float_tensor: torch.Tensor, target_shape: list, target_dtype: np.dtype
 ) -> np.ndarray:
     """
     Convert float tensor with dimension of NxCxHxW back to numpy array.

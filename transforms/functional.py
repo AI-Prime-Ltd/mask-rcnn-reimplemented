@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-
 """
 Most functions in this file assume input and output image is np.ndarray of shape NxHxWxC, or HxWxC or HxW,
 The array can be of type uint8 in range [0, 255], or floating point in range [0, 1] or [0, 255].
@@ -59,9 +58,9 @@ def gray2rgb(img: np.ndarray):
     """
     assert img.ndim == 2 or img.shape[-1] == 1
     out_img = np.array(img)
-    if img.ndim == 2:   # HxW
+    if img.ndim == 2:  # HxW
         out_img = out_img[..., None]
-    out_img = np.tile(out_img, (1, ) * (out_img.ndim - 1) + (3, ))
+    out_img = np.tile(out_img, (1,) * (out_img.ndim - 1) + (3,))
     return out_img
 
 
@@ -131,9 +130,9 @@ def adjust_color(img, alpha=1, beta=None, gamma=0):
     Returns:
         ndarray: Colored image which has the same size and dtype as input.
     """
-    gray_img = rgb2gray(img)    # HxW or NxHxWx1
+    gray_img = rgb2gray(img)  # HxW or NxHxWx1
     assert gray_img.ndim == 2 or (gray_img.ndim == 4 and gray_img.shape[-1] == 1)
-    gray_img = np.tile(gray_img, (1, ) * (gray_img.ndim - 1) + (3, ))
+    gray_img = np.tile(gray_img, (1,) * (gray_img.ndim - 1) + (3,))
     if beta is None:
         beta = 1 - alpha
     colored_img = cv2.addWeighted(img, alpha, gray_img, beta, gamma)

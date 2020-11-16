@@ -1,6 +1,4 @@
-import torch as th
 import torch.nn as nn
-
 
 DEFAULT_CROP_PCT = 0.875
 IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)

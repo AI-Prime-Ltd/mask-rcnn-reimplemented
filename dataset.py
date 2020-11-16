@@ -1,25 +1,20 @@
-import os
-import logging
-from pathlib import Path
 import contextlib
-import io
 import hashlib
-from typing import Optional, List, Dict, Any, Union
+import io
+import logging
 import pickle
 import time
+from pathlib import Path
+from typing import Optional, List, Union
 
-import torch
-import torch.utils.data as data
 import pycocotools.mask as mask_util
 import pytorch_lightning as pl
-import json
+import torch.utils.data as data
+from tqdm import tqdm
 
-# temporary imports
-from utils import Timer
 from structures.boxes import BoxMode
 from transforms.augmentation import Compose
-
-from tqdm import tqdm
+from utils import Timer
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +243,8 @@ class COCODataset(pl.LightningDataModule):
         for phase, p in {"train": self.train_json, "val": self.val_json, "test": self.test_json}.items():
             if p is None or hasattr(self, f"{phase}_dataset"):
                 continue
-            dataset = load_coco_json(str(getattr(self, f"{phase}_dataset")), self.dataset_root / phase, *self.coco_args, **self.coco_kwargs)
+            dataset = load_coco_json(str(getattr(self, f"{phase}_dataset")), self.dataset_root / phase, *self.coco_args,
+                                     **self.coco_kwargs)
             setattr(self, f"{phase}_dataset", dataset)
             if self.use_cached:
                 logger.info(f"creating cache for json {p.name}")
@@ -297,13 +293,13 @@ class COCOInstanceDataset(COCODataset):
             image_id = img_info["image_id"]
             file_name = img_info["file_name"]
             self.instances.extend((
-                image_id,
-                file_name,
-                anno["bbox"],
-                anno["bbox_mode"],
-                anno["segmentation"],
-                anno["category_id"]
-            ) for anno in img_info["annotations"])
+                                      image_id,
+                                      file_name,
+                                      anno["bbox"],
+                                      anno["bbox_mode"],
+                                      anno["segmentation"],
+                                      anno["category_id"]
+                                  ) for anno in img_info["annotations"])
 
     def setup(self, stage=None):
         # Assign train/val datasets for use in dataloaders

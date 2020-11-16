@@ -6,8 +6,7 @@ easily be swapped. All have an `inplace` arg even if not used.
 Hacked together by / Copyright 2020 Ross Wightman
 """
 
-import torch
-from torch import nn as nn
+import torch.nn as nn
 from torch.nn import functional as F
 
 
@@ -36,6 +35,7 @@ def mish(x, inplace: bool = False):
 class Mish(nn.Module):
     """Mish: A Self Regularized Non-Monotonic Neural Activation Function - https://arxiv.org/abs/1908.08681
     """
+
     def __init__(self, inplace: bool = False):
         super(Mish, self).__init__()
 

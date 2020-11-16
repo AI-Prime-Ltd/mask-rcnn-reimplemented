@@ -2,9 +2,9 @@ from typing import Dict
 
 import numpy as np
 import torch
-import torch.nn.parallel
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.parallel
 
 from .padding import get_padding
 

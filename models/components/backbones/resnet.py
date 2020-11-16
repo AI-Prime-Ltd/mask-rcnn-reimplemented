@@ -10,20 +10,18 @@ additional dropout and dynamic global avg/max pool.
 ResNeXt, SE-ResNeXt, SENet, and MXNet Gluon stem/downsample variants, tiered stems added by Ross Wightman
 Copyright 2020 Ross Wightman
 """
-import math
-import copy
-from typing import List, Dict, Callable, Optional, Type, Union, Any
 import logging
+import math
 from pprint import pformat
+from typing import List, Dict, Callable, Optional, Type, Union, Any
 
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from .base import MetaClassifierBase
 from .helpers import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from ...utils.weight_init import constant_init, kaiming_init
 from ..layers import DropBlock2d, DropPath, AvgPool2dSame, BlurPool2d, SEModule, EcaModule
+from ...utils.weight_init import constant_init, kaiming_init
 
 _logger = logging.getLogger(__name__)
 
@@ -495,7 +493,7 @@ class ResNet(MetaClassifierBase):
 
         self.init_weights()
 
-    def init_weights(self):
+    def init_weights(self, pretrained=False):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 kaiming_init(m)
@@ -1098,4 +1096,3 @@ ResNet.variants = {
         )
     ),
 }
-
