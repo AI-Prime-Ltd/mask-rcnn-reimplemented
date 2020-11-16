@@ -494,6 +494,8 @@ class ResNet(MetaClassifierBase):
         self.init_weights()
 
     def init_weights(self, pretrained=False):
+        if pretrained:
+            self.load_pretrained()
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 kaiming_init(m)
