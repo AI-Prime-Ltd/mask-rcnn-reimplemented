@@ -1,5 +1,5 @@
 """
-This started as a copy of https://github.com/allankevinrichie/pytorch-image-models/blob/master/timm/models/resnet.py
+This started as a copy of https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/resnet.py
 below is the original docstring:
 
 PyTorch ResNet
