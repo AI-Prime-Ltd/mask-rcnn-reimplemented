@@ -6,6 +6,7 @@ import io
 import hashlib
 from typing import Optional, List, Dict, Any, Union
 import pickle
+import time
 
 import torch
 import torch.utils.data as data
@@ -209,23 +210,25 @@ class COCODataset(pl.LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         if self.use_cached:
-            # try to load cached dataset
-            # TODO: come up with a better way to do this
-            while True:
-                try:
-                    Path("./cache/dataset.lock").touch(exist_ok=False)
-                except Exception as e:
-                    pass
-                else:
-                    break
             for phase, p in {"train": self.train_json, "val": self.val_json, "test": self.test_json}.items():
                 if p is None:
                     continue
+                # TODO: come up with a better way to do this
+                while True:
+                    try:
+                        Path("./cache/dataset.lock").touch(exist_ok=False)
+                    except Exception as e:
+                        time.sleep(0.1)
+                    else:
+                        break
                 setattr(self, f"{phase}_dataset_md5", hash_file(p))
                 src_md5 = getattr(self, f"{phase}_dataset_md5")
                 for cached_file in Path("./cache/").glob(f"dataset-{src_md5}-*.pkl"):
                     dst_md5 = cached_file.name.split("-")[-1][:-5]
-                    if hash_file(cached_file) == dst_md5:
+                    if dst_md5 == "temp":
+                        Path("./cache/dataset.lock").unlink(missing_ok=True)
+                        continue
+                    elif hash_file(cached_file) == dst_md5:
                         logger.info(f"use cached file {cached_file.name} for json {p.name}")
                         with open(str(cached_file), "rb") as fp:
                             try:
@@ -233,12 +236,13 @@ class COCODataset(pl.LightningDataModule):
                             except Exception as e:
                                 logger.warning(f"failed to load {cached_file}: {e}. removing cached file.")
                                 cached_file.unlink()
+                                Path("./cache/dataset.lock").unlink(missing_ok=True)
                                 break
                         setattr(self, f"{phase}_dataset", dataset)
-
                     else:
                         logger.warning(f"find broken cache {cached_file}, deleting...")
                         cached_file.unlink()
+                Path("./cache/dataset.lock").unlink(missing_ok=True)
 
         # load dataset from original coco annotations and create caches
         for phase, p in {"train": self.train_json, "val": self.val_json, "test": self.test_json}.items():
@@ -251,6 +255,15 @@ class COCODataset(pl.LightningDataModule):
                 if not hasattr(self, f"{phase}_dataset_md5"):
                     setattr(self, f"{phase}_dataset_md5", hash_file(p))
                 src_md5 = getattr(self, f"{phase}_dataset_md5")
+                # try to build new cache
+                # TODO: come up with a better way to do this
+                while True:
+                    try:
+                        Path("./cache/dataset.lock").touch(exist_ok=False)
+                    except Exception as e:
+                        time.sleep(0.1)
+                    else:
+                        break
                 cached_file = Path("./cache/") / f"dataset-{src_md5}-temp.pkl"
                 cached_file.unlink(missing_ok=True)
                 cached_file.parent.mkdir(parents=True, exist_ok=True)
@@ -259,6 +272,7 @@ class COCODataset(pl.LightningDataModule):
                     pickle.dump(dataset, fp, protocol=4)
                 dst_md5 = hash_file(cached_file)
                 cached_file.rename(cached_file.parent / f"dataset-{src_md5}-{dst_md5}.pkl")
+                Path("./cache/dataset.lock").unlink(missing_ok=True)
 
     def train_dataloader(self, *args, **kwargs) -> data.DataLoader:
         pass

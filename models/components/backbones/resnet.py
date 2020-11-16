@@ -1,6 +1,6 @@
 """
 This started as a copy of https://github.com/allankevinrichie/pytorch-image-models/blob/master/timm/models/resnet.py
-below are original comments:
+below is the original docstring:
 
 PyTorch ResNet
 
@@ -14,6 +14,7 @@ import math
 import copy
 from typing import List, Dict, Callable, Optional, Type, Union, Any
 import logging
+from pprint import pformat
 
 import torch
 import torch.nn as nn
@@ -45,11 +46,12 @@ def _meta(**kwargs):
 
 def _cfg(**kwargs):
     default = {
+        'block': Bottleneck,
         'num_classes': 1000,
         'in_channels': 3,
         'cardinality': 1,
         'base_width': 64,
-        'stem_layer': Bottleneck,
+        'stem_layer': BasicStem,
         'stem_kwargs': {},
         'output_stride': 32,
         'block_reduce_first': 1,
@@ -102,7 +104,7 @@ class BasicBlock(nn.Module):
             first_planes, outplanes, kernel_size=3, padding=dilation, dilation=dilation, bias=False)
         self.bn2 = norm_layer(outplanes)
 
-        self.se = attn_layer(outplanes, **(attn_kwargs or dict()))
+        self.se = attn_layer(outplanes, **(attn_kwargs or dict())) if attn_layer else None
 
         self.act2 = act_layer(inplace=True)
         self.downsample = downsample
@@ -169,7 +171,7 @@ class Bottleneck(nn.Module):
         self.conv3 = nn.Conv2d(width, outplanes, kernel_size=1, bias=False)
         self.bn3 = norm_layer(outplanes)
 
-        self.se = attn_layer(outplanes, **(attn_kwargs or dict()))
+        self.se = attn_layer(outplanes, **(attn_kwargs or dict())) if attn_layer else None
 
         self.act3 = act_layer(inplace=True)
         self.downsample = downsample
@@ -453,11 +455,12 @@ class ResNet(MetaClassifierBase):
             num_classes=num_classes
         )
         self.load_config(expose_in_self=True)
+        _logger.info(f"building {self.variant} with configuration: \n{pformat(self.config)}")
         # Stem
         stem_kwargs = dict(stem_kwargs)
         stem_kwargs.setdefault("norm_layer", norm_layer)
         stem_kwargs.setdefault("act_layer", act_layer)
-        self.conv1 = stem_layer(**stem_kwargs)
+        self.conv1 = stem_layer(in_channels, **stem_kwargs)
         self.bn1 = norm_layer(self.conv1.stem_out_channels)
         self.act1 = act_layer(inplace=True)
         self.feature_info = [dict(num_chs=self.conv1.stem_out_channels, reduction=2, module='act1')]
@@ -472,14 +475,14 @@ class ResNet(MetaClassifierBase):
 
         # Feature Blocks
         channels = [64, 128, 256, 512]
-        stage_modules, stage_feature_info = make_blocks(
+        stage_modules = make_blocks(
             block, channels, layers, self.conv1.stem_out_channels, cardinality=cardinality, base_width=base_width,
             output_stride=output_stride, reduce_first=block_reduce_first, avg_down=avg_down,
             down_kernel_size=down_kernel_size, act_layer=act_layer, norm_layer=norm_layer, aa_layer=aa_layer,
             drop_block_rate=drop_block_rate, drop_path_rate=drop_path_rate, **block_kwargs)
         for stage in stage_modules:
             self.add_module(*stage)  # layer1, layer2, etc
-        self.feature_info.extend(stage_feature_info)
+        # self.feature_info.extend(stage_feature_info)
 
         # Head (Pooling and Classifier)
         if self.num_classes:
@@ -502,9 +505,9 @@ class ResNet(MetaClassifierBase):
         if self.zero_init_residual:
             for m in self.modules():
                 if isinstance(m, Bottleneck):
-                    constant_init(m.norm3, 0)
+                    constant_init(m.bn3, 0)
                 elif isinstance(m, BasicBlock):
-                    constant_init(m.norm2, 0)
+                    constant_init(m.bn2, 0)
 
     def forward_features(self, x):
         x = self.conv1(x)
@@ -1095,3 +1098,4 @@ ResNet.variants = {
         )
     ),
 }
+

@@ -7,6 +7,7 @@ import logging
 import math
 from functools import partial
 
+import torch as th
 from torch import nn
 import torch.utils.hooks as hooks
 import torch.utils.model_zoo as model_zoo
@@ -21,7 +22,59 @@ def _variant(config: dict, meta: dict):
     return dict(config=config, meta=meta)
 
 
-class MetaBackboneBase(nn.Module):
+class MetaBackboneMeta(type):
+    def build_model(
+            cls: "MetaBackboneBase",
+            variant: str,
+            pretrained: bool = False,
+            *,
+            pretrained_filter_fn: Optional[Callable] = None,
+            pretrained_map_location: str = "cpu",
+            pretrained_strict: bool = True,
+            pretrained_auto_channel_cvt: bool = True,
+            pretrained_auto_classifier_cvt: bool = True,
+            **kwargs
+    ):
+        # load default config for the required variant
+        config = deepcopy(cls.variants[variant]["config"])
+        meta = cls.variants[variant]["meta"]
+        # update default config with custom config
+        config.update(kwargs)
+        # init model with config
+        model = cls(variant, **config)
+
+        # for classification models, check class attr, then kwargs, then default to 1k, otherwise 0 for feats
+        if pretrained:
+            if "url" not in meta.keys() or not meta["url"]:
+                _logger.warning(
+                    f"{variant} has no pretrained model specified in meta, skipped loading."
+                )
+                return model
+            model.load_pretrained(
+                pretrained_filter_fn,
+                pretrained_map_location,
+                pretrained_strict,
+                auto_channel_cvt=pretrained_auto_channel_cvt,
+                auto_classifier_cvt=pretrained_auto_classifier_cvt
+            )
+
+        return model
+
+    def _create_variant(cls, variant, pretrained=False, **kwargs):
+        return cls.build_model(
+            variant, pretrained,
+            **kwargs
+        )
+
+    def __getattr__(cls, item):
+        if item.startswith("create_"):
+            variant = item[7:]
+            if variant in cls.variants.keys():
+                return partial(cls._create_variant, variant)
+        raise AttributeError()
+
+
+class MetaBackboneBase(nn.Module, metaclass=MetaBackboneMeta):
     """
     Interface for all backbone models.
     """
@@ -42,7 +95,7 @@ class MetaBackboneBase(nn.Module):
         self._meta = deepcopy(self.variants[variant]["meta"])
         self.variant = variant
         self._out_features = {}
-        for f in set(out_features) or tuple():
+        for f in set(out_features or tuple()):
             try:
                 m = extract_layer(self, f)
             except AttributeError as e:
@@ -54,7 +107,6 @@ class MetaBackboneBase(nn.Module):
                 m.register_forward_hook(partial(self._collect_feature_hook, f))
 
         self.load_config()
-        _logger.info(f"building {self.variant} with configuration: \n\t{self.config}")
 
     def load_config(self, ignored_locals=("self", "variant", "out_features"), expose_in_self=True, use_deepcopy=False):
         """
@@ -69,9 +121,9 @@ class MetaBackboneBase(nn.Module):
                 continue
             if use_deepcopy:
                 v = deepcopy(v)
-            if expose_in_self:
-                setattr(self, k, property(lambda self: self._config[k]))
             self._config[k] = v
+            if expose_in_self:
+                setattr(type(self), k, property(lambda self, k=k: self._config[k]))
         return self._config
 
     @property
@@ -182,7 +234,6 @@ class MetaBackboneBase(nn.Module):
             state_dict[classifier_name + '.weight'] = classifier_weight[1:]
             classifier_bias = state_dict[classifier_name + '.bias']
             state_dict[classifier_name + '.bias'] = classifier_bias[1:]
-
         elif default_num_classes != num_classes:
             # completely discard fully connected for all other differences between pretrained and created model
             _logger.warning(
@@ -194,52 +245,6 @@ class MetaBackboneBase(nn.Module):
             strict = False
 
         self.load_state_dict(state_dict, strict=strict)
-
-    @classmethod
-    def build_model(
-            cls: "MetaBackboneBase",
-            variant: str,
-            pretrained: bool = False,
-            *,
-            pretrained_filter_fn: Optional[Callable] = None,
-            pretrained_map_location: str = "str",
-            pretrained_strict: bool = True,
-            pretrained_auto_channel_cvt: bool = True,
-            pretrained_auto_classifier_cvt: bool = True,
-            **kwargs
-    ):
-        # load default config for the required variant
-        config = deepcopy(cls.variants[variant]["config"])
-        # update default config with custom config
-        config.update(kwargs)
-        # init model with config
-        model = cls(variant, **config)
-
-        # for classification models, check class attr, then kwargs, then default to 1k, otherwise 0 for feats
-        if pretrained:
-            model.load_pretrained(
-                pretrained_filter_fn,
-                pretrained_map_location,
-                pretrained_strict,
-                auto_channel_cvt=pretrained_auto_channel_cvt,
-                auto_classifier_cvt=pretrained_auto_classifier_cvt
-            )
-
-        return model
-
-    @classmethod
-    def _create_variant(cls, variant, pretrained=False, **kwargs):
-        return cls.build_model(
-            variant, pretrained,
-            **kwargs
-        )
-
-    def __getattr__(self, item):
-        if item.startswith("create_"):
-            variant = item[8:]
-            if variant in self.variants.keys():
-                return partial(self._create_variant, variant)
-        return super().__getattr__(item)
 
 
 class MetaClassifierBase(MetaBackboneBase):

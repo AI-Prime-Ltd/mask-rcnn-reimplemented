@@ -38,17 +38,19 @@ from torch import nn as nn
 import torch.nn.functional as F
 import math
 
+from .activations import HardSigmoid, Sigmoid
+
 
 class SEModule(nn.Module):
 
     def __init__(self, in_channels, reduction=16, act_layer=nn.ReLU, min_channels=8, reduction_channels=None,
-                 gate_layer=nn.Sigmoid):
+                 gate_layer=Sigmoid):
         super(SEModule, self).__init__()
         reduction_channels = reduction_channels or max(in_channels // reduction, min_channels)
         self.fc1 = nn.Conv2d(in_channels, reduction_channels, kernel_size=1, bias=True)
         self.act = act_layer(inplace=True)
         self.fc2 = nn.Conv2d(reduction_channels, in_channels, kernel_size=1, bias=True)
-        self.gate = gate_layer()
+        self.gate = gate_layer(inplace=True)
 
     def forward(self, x):
         x_se = x.mean((2, 3), keepdim=True)
@@ -62,10 +64,10 @@ class EffectiveSEModule(nn.Module):
     """ 'Effective Squeeze-Excitation
     From `CenterMask : Real-Time Anchor-Free Instance Segmentation` - https://arxiv.org/abs/1911.06667
     """
-    def __init__(self, channels, gate_layer=nn.HardSigmoid):
+    def __init__(self, channels, gate_layer=HardSigmoid):
         super(EffectiveSEModule, self).__init__()
         self.fc = nn.Conv2d(channels, channels, kernel_size=1, padding=0)
-        self.gate = create_act_layer(gate_layer, inplace=True)
+        self.gate = gate_layer(inplace=True)
 
     def forward(self, x):
         x_se = x.mean((2, 3), keepdim=True)

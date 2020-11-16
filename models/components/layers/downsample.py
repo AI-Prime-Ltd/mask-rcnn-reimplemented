@@ -1,7 +1,12 @@
+from typing import Dict
+
+import numpy as np
 import torch
 import torch.nn.parallel
 import torch.nn as nn
 import torch.nn.functional as F
+
+from .padding import get_padding
 
 
 class AntiAliasDownsampleLayer(nn.Module):
@@ -69,13 +74,6 @@ FIXME merge this impl with those in `anti_aliasing.py`
 
 Hacked together by Chris Ha and Ross Wightman
 """
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-from typing import Dict
-from .padding import get_padding
 
 
 class BlurPool2d(nn.Module):
