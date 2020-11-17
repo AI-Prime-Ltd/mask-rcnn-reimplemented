@@ -79,6 +79,27 @@ class MetaBackboneBase(nn.Module, metaclass=MetaBackboneMeta):
     """
     variants: Dict[str, Dict]
 
+    def __new__(cls, *args, **kwargs):
+        inst = super().__new__(cls)
+        # replace the original __init__ method with no-op
+        if not hasattr(cls, "__ori_init__"):
+            cls.__ori_init__ = cls.__init__
+            cls.__init__ = lambda *args, **kwargs: None
+
+        # call the original __init__ method before registering hook
+        inst.__ori_init__(*args, **kwargs)
+        for f in set(inst._out_features or tuple()):
+            try:
+                m = extract_layer(inst, f)
+            except (AttributeError, KeyError) as e:
+                _logger.exception(
+                    f"cannot find submodule: {f}"
+                )
+                raise e
+            else:
+                m.register_forward_hook(partial(inst._collect_feature_hook, f))
+        return inst
+
     def __init__(
             self,
             variant: str, *,
@@ -89,21 +110,11 @@ class MetaBackboneBase(nn.Module, metaclass=MetaBackboneMeta):
         self._config = {}
         self._meta = deepcopy(self.variants[variant]["meta"])
         self.variant = variant
-        self._out_features = {}
-        for f in set(out_features or tuple()):
-            try:
-                m = extract_layer(self, f)
-            except AttributeError as e:
-                _logger.exception(
-                    f"cannot find submodule: {f}"
-                )
-                raise e
-            else:
-                m.register_forward_hook(partial(self._collect_feature_hook, f))
+        self.out_features = {}
+        self._out_features = out_features
+        self._load_config()
 
-        self.load_config()
-
-    def load_config(self, ignored_locals=("self", "variant", "out_features"), expose_in_self=True, use_deepcopy=False):
+    def _load_config(self, ignored_locals=("self", "variant", "out_features"), expose_in_self=True, use_deepcopy=False):
         """
         This function is expected to be directly called in __init__ as a helper function to easily port all
         arguments into current instance
@@ -129,8 +140,8 @@ class MetaBackboneBase(nn.Module, metaclass=MetaBackboneMeta):
     def meta(self) -> Dict:
         return self._meta
 
-    def _collect_feature_hook(self, name, *_, output):
-        self._out_features[name] = output
+    def _collect_feature_hook(self, name, _, __, output):
+        self.out_features[name] = output
         return None
 
     def register_forward_hook(self, hook: Callable[..., None]) -> hooks.RemovableHandle:
@@ -256,7 +267,7 @@ class MetaClassifierBase(MetaBackboneBase):
             out["classifier"] = self.forward_classifier(x)
         else:
             out["features"] = self.forward_features(x)
-        out.update(self._out_features)
+        out.update(self.out_features)
 
         return out
 
