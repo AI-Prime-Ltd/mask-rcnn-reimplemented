@@ -25,7 +25,7 @@ from ...utils.weight_init import constant_init, kaiming_init
 
 _logger = logging.getLogger(__name__)
 
-__all__ = ['ResNet', 'BasicBlock', 'Bottleneck']  # model_registry will add each entrypoint fn to this
+__all__ = ['ResNet', 'BasicBlock', 'Bottleneck', 'BasicStem', 'DeepStem']  # model_registry will add each entrypoint fn to this
 
 
 def _meta(**kwargs):

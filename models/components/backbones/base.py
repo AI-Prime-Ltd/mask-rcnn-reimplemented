@@ -4,6 +4,7 @@ import math
 from copy import deepcopy
 from functools import partial
 from typing import Dict, Iterable, Optional, Callable
+from collections import OrderedDict
 
 import torch.nn as nn
 import torch.utils.hooks as hooks
@@ -88,7 +89,7 @@ class MetaBackboneBase(nn.Module, metaclass=MetaBackboneMeta):
 
         # call the original __init__ method before registering hook
         inst.__ori_init__(*args, **kwargs)
-        for f in set(inst._out_features or tuple()):
+        for f in (inst._out_features or tuple()):
             try:
                 m = extract_layer(inst, f)
             except (AttributeError, KeyError) as e:
@@ -110,7 +111,7 @@ class MetaBackboneBase(nn.Module, metaclass=MetaBackboneMeta):
         self._config = {}
         self._meta = deepcopy(self.variants[variant]["meta"])
         self.variant = variant
-        self.out_features = {}
+        self.out_features = OrderedDict()
         self._out_features = out_features
         self._load_config()
 
@@ -262,12 +263,16 @@ class MetaClassifierBase(MetaBackboneBase):
         raise NotImplementedError()
 
     def forward(self, x):
-        out = {}
+        out = OrderedDict()
+        if self.num_classes:
+            classifier = self.forward_classifier(x)
+        else:
+            features = self.forward_features(x)
+        out.update(self.out_features)
         if self.num_classes:
             out["classifier"] = self.forward_classifier(x)
         else:
             out["features"] = self.forward_features(x)
-        out.update(self.out_features)
 
         return out
 
