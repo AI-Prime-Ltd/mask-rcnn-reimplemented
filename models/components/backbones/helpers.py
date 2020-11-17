@@ -17,11 +17,8 @@ def extract_layer(model: nn.Module, layer: str):
     if not hasattr(model, 'module') and layer[0] == 'module':
         layer = layer[1:]
     for l in layer:
-        if hasattr(module, l):
-            if not l.isdigit():
-                module = getattr(module, l)
-            else:
-                module = module[int(l)]
+        if not l.isdigit():
+            module = getattr(module, l)
         else:
-            return module
+            module = module[int(l)]
     return module

@@ -452,7 +452,7 @@ class ResNet(MetaClassifierBase):
             out_features=out_features,
             num_classes=num_classes
         )
-        self.load_config(expose_in_self=True)
+        self._load_config(expose_in_self=True)
         _logger.info(f"building {self.variant} with configuration: \n{pformat(self.config)}")
         # Stem
         stem_kwargs = dict(stem_kwargs)
@@ -461,7 +461,7 @@ class ResNet(MetaClassifierBase):
         self.conv1 = stem_layer(in_channels, **stem_kwargs)
         self.bn1 = norm_layer(self.conv1.stem_out_channels)
         self.act1 = act_layer(inplace=True)
-        self.feature_info = [dict(num_chs=self.conv1.stem_out_channels, reduction=2, module='act1')]
+        # self.feature_info = [dict(num_chs=self.conv1.stem_out_channels, reduction=2, module='act1')]
 
         # Stem Pooling
         if aa_layer is not None:
@@ -485,7 +485,7 @@ class ResNet(MetaClassifierBase):
         # Head (Pooling and Classifier)
         if self.num_classes:
             self.num_features = 512 * block.expansion
-            self.global_pool = global_pooling_layer
+            self.global_pool = global_pooling_layer((1, 1))
             self.fc = nn.Linear(self.num_features, self.num_classes, bias=True)
         else:
             self.add_module("global_pool", None)

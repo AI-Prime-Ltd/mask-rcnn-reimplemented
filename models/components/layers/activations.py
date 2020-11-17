@@ -7,7 +7,7 @@ Hacked together by / Copyright 2020 Ross Wightman
 """
 
 import torch.nn as nn
-from torch.nn import functional as F
+import torch.nn.functional as F
 
 
 def swish(x, inplace: bool = False):
